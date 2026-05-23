@@ -16,6 +16,14 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
+def _flatten_yfinance_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """yfinance renvoie (Price, Ticker) : on garde Open, High, Low, Close, Volume."""
+    if isinstance(df.columns, pd.MultiIndex):
+        df = df.copy()
+        df.columns = df.columns.get_level_values(0)
+    return df
+
+
 # Récupération des cours
 def fetch_data(tickers: list[str], period: str = "2y") -> dict[str, pd.DataFrame]:
     """
@@ -30,6 +38,7 @@ def fetch_data(tickers: list[str], period: str = "2y") -> dict[str, pd.DataFrame
         if df.empty:
             print(f"Aucune donnée pour {ticker}")
             continue
+        df = _flatten_yfinance_columns(df)
         df.index = pd.to_datetime(df.index)
         data[ticker] = df
         print(f"{len(df)} jours | {df.index[0].date()} → {df.index[-1].date()}")
@@ -59,68 +68,13 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
         (df["Close"] > 0) &
         (df["Volume"] >= 0)
     )
-    n_dropped = (~mask).sum()
+    n_dropped = int((~mask).sum())
     if n_dropped > 0:
         print(f"{n_dropped} ligne(s) incohérente(s) supprimée(s)")
     return df[mask]
 
 
-
-
 # Indicateurs techniques
-def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Enrichit le tableau avec rendements, volatilité, moyennes mobiles,
-    MACD, RSI, bandes de Bollinger et drawdown.
-    """
-    df = df.copy()
-    close = df["Close"]
-
-    # Variation du cours d'un jour à l'autre
-    df["log_return"]    = np.log(close / close.shift(1))
-    df["simple_return"] = close.pct_change()
-
-    # Volatilité sur 20 et 60 séances, ramenée à l'échelle annuelle (252 jours de bourse)
-    df["vol_20d"]  = df["log_return"].rolling(20).std()  * np.sqrt(252)
-    df["vol_60d"]  = df["log_return"].rolling(60).std()  * np.sqrt(252)
-
-    # Moyennes mobiles simples et exponentielles
-    df["sma_20"]  = close.rolling(20).mean()
-    df["sma_50"]  = close.rolling(50).mean()
-    df["sma_200"] = close.rolling(200).mean()
-    df["ema_12"]  = close.ewm(span=12, adjust=False).mean()
-    df["ema_26"]  = close.ewm(span=26, adjust=False).mean()
-
-    # MACD : écart entre deux EMA, avec sa ligne de signal et l'histogramme
-    df["macd"]        = df["ema_12"] - df["ema_26"]
-    df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
-    df["macd_hist"]   = df["macd"] - df["macd_signal"]
-
-    # RSI sur 14 jours (force relative, entre 0 et 100)
-    delta = close.diff()
-    gain  = delta.clip(lower=0).rolling(14).mean()
-    loss  = (-delta.clip(upper=0)).rolling(14).mean()
-    rs    = gain / loss.replace(0, np.nan)
-    df["rsi_14"] = 100 - (100 / (1 + rs))
-
-    # Bandes de Bollinger : moyenne sur 20 jours ± 2 écarts-types
-    df["bb_mid"]   = df["sma_20"]
-    df["bb_upper"] = df["sma_20"] + 2 * close.rolling(20).std()
-    df["bb_lower"] = df["sma_20"] - 2 * close.rolling(20).std()
-
-    # Drawdown : à quel point le cours est en dessous de son plus haut historique
-    roll_max       = close.cummax()
-    df["drawdown"] = (close - roll_max) / roll_max
-
-    return df
-
-
-
-
-# ─────────────────────────────────────────────
-# Indicateurs techniques
-# ─────────────────────────────────────────────
-
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
     Enrichit le tableau avec rendements, volatilité, moyennes mobiles,
