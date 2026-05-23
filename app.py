@@ -209,3 +209,106 @@ def performance_metrics(df: pd.DataFrame, ticker: str = "") -> dict:
     }
     return metrics
 
+# Graphiques interactifs (Plotly)
+def plot_dashboard(df: pd.DataFrame, ticker: str):
+    """
+    Construit une page HTML avec chandeliers, volume, MACD et RSI.
+    Les barres vertes / rouges suivent le sens du cours du jour.
+    """
+    fig = make_subplots(
+        rows=4, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.04,
+        row_heights=[0.5, 0.15, 0.2, 0.15],
+        subplot_titles=[
+            f"{ticker} — Prix & Bollinger Bands",
+            "Volume",
+            "MACD",
+            "RSI (14j)"
+        ]
+    )
+
+    # Graphique principal : chandeliers + bandes et moyennes mobiles
+    fig.add_trace(go.Candlestick(
+        x=df.index, open=df["Open"], high=df["High"],
+        low=df["Low"], close=df["Close"], name="OHLC",
+        increasing_line_color="#26a69a", decreasing_line_color="#ef5350"
+    ), row=1, col=1)
+
+    for col, color, name in [
+        ("bb_upper", "rgba(100,120,255,0.3)", "BB Upper"),
+        ("bb_lower", "rgba(100,120,255,0.3)", "BB Lower"),
+        ("sma_50",   "rgba(255,180,0,0.8)",   "SMA 50"),
+        ("sma_200",  "rgba(255,100,100,0.8)", "SMA 200"),
+    ]:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df[col], name=name,
+            line=dict(color=color, width=1), mode="lines"
+        ), row=1, col=1)
+
+    # Volume coloré selon que le cours a monté ou baissé ce jour-là
+    colors = ["#26a69a" if r >= 0 else "#ef5350" for r in df["simple_return"].fillna(0)]
+    fig.add_trace(go.Bar(
+        x=df.index, y=df["Volume"], name="Volume",
+        marker_color=colors, showlegend=False
+    ), row=2, col=1)
+
+    # MACD : courbe, signal et histogramme
+    fig.add_trace(go.Scatter(x=df.index, y=df["macd"],        name="MACD",   line=dict(color="#2196F3", width=1.2)), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df["macd_signal"], name="Signal", line=dict(color="#FF9800", width=1.2)), row=3, col=1)
+    hist_colors = ["#26a69a" if v >= 0 else "#ef5350" for v in df["macd_hist"].fillna(0)]
+    fig.add_trace(go.Bar(x=df.index, y=df["macd_hist"], name="Histogramme", marker_color=hist_colors, showlegend=False), row=3, col=1)
+
+    # RSI avec repères 30 (survente) et 70 (surachat)
+    fig.add_trace(go.Scatter(x=df.index, y=df["rsi_14"], name="RSI", line=dict(color="#9C27B0", width=1.2)), row=4, col=1)
+    fig.add_hline(y=70, line_dash="dash", line_color="red",   opacity=0.5, row=4, col=1)
+    fig.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, row=4, col=1)
+
+    fig.update_layout(
+        title=f"Dashboard Quant — {ticker}",
+        template="plotly_dark",
+        xaxis_rangeslider_visible=False,
+        height=800,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02)
+    )
+
+    fig.write_html(f"{ticker}_dashboard.html")
+    print(f"Dashboard sauvegardé : {ticker}_dashboard.html")
+    fig.show()
+
+
+
+# Point d'entrée du script
+if __name__ == "__main__":
+    TICKERS = ["AAPL", "MSFT", "NVDA"]
+    PERIOD  = "2y"
+
+    raw_data = fetch_data(TICKERS, period=PERIOD)
+
+    all_metrics = []
+
+    for ticker, df_raw in raw_data.items():
+        print(f"\n{'─'*50}")
+        print(f"  Traitement : {ticker}")
+        print(f"{'─'*50}")
+
+        df_clean = clean_data(df_raw)
+        df = compute_indicators(df_clean)
+
+        df.to_csv(f"{ticker}_data.csv")
+        print(f"  CSV sauvegardé : {ticker}_data.csv")
+
+        metrics = performance_metrics(df, ticker)
+        all_metrics.append(metrics)
+        print("\n  Métriques de performance :")
+        for k, v in metrics.items():
+            print(f"     {k:<20} {v}")
+
+        plot_dashboard(df, ticker)
+
+    # Tableau récap de tous les titres traités
+    print(f"\n{'═'*50}")
+    print("  RÉCAPITULATIF GLOBAL")
+    print(f"{'═'*50}")
+    df_recap = pd.DataFrame(all_metrics).set_index("ticker")
+    print(df_recap.to_string())
